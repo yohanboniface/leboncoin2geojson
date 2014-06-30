@@ -6,12 +6,13 @@ Usage:
     leboncoin2geojson.py <url> [options]
 
 Options:
-    --help      shows this message and exit
+    --help                  shows this message and exit
+    --max_pages=<int>       max pages to process [default: 5]
+    --geocoder=<url>        geocoder to user [default: http://france.photon.fluv.io/api/?]
 
 """
 
 import re
-import os
 import json
 
 from urllib.parse import urlparse, parse_qs
@@ -21,7 +22,8 @@ import requests
 
 from pyquery import PyQuery as pq
 
-GEOCODER = os.environ.get('GEOCODER', 'http://france.photon.fluv.io/api/?')
+GEOCODER = ""
+MAX_PAGES = 5
 
 
 def get_position(where):
@@ -35,11 +37,12 @@ def clean(s):
     return re.sub('\s+', ' ', s)
 
 
-def to_geojson(url):
-    # parsed = urlparse(url)
-    # params = parse_qs(parsed.query)
-    # url = '{scheme}://{netloc}'.format(scheme=parsed.scheme, netloc=parsed.netloc)
-    r = requests.get(url, params={}, headers={'user-agent': 'PutThemOnAMapAmigos'})
+def process_page(url, params, features=None, page=1):
+    if features is None:
+        features = []
+    params['o'] = page
+    print('# Page', page)
+    r = requests.get(url, params=params, headers={'user-agent': 'PutThemOnAMapAmigos'})
     doc = pq(r.text)
     results = doc('.list-lbc a')
     features = []
@@ -49,13 +52,13 @@ def to_geojson(url):
             continue
         name = el.attr('title')
         print('Processing', name)
-        url = el.attr('href')
+        href = el.attr('href')
         price = el('.price').text()
         where = clean(el('.placement').text()).split('/')
         if len(where) == 1:
             continue  # Only departement
         city, dep = where
-        coords = get_position(city.strip())
+        coords = get_position(" ".join([city.strip(), dep.strip()]))
         features.append({
             "type": "Feature",
             "geometry": {
@@ -64,13 +67,28 @@ def to_geojson(url):
             },
             "properties": {
                 "name": name,
-                "url": url,
+                "url": href,
                 "price": price,
                 "img": img.attr('src'),
                 "city": city,
                 "dep": dep
             }
         })
+    more_page = doc('#paging li:last a')
+    if more_page and page < MAX_PAGES:
+        features.extend(process_page(url, params, features, page + 1))
+    return features
+
+
+def to_geojson(url):
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    url = '{scheme}://{netloc}{path}'.format(
+        scheme=parsed.scheme,
+        netloc=parsed.netloc,
+        path=parsed.path,
+    )
+    features = process_page(url, params)
     geojson = {
         "type": "FeatureCollection",
         "features": features
@@ -80,5 +98,10 @@ def to_geojson(url):
 
 if __name__ == "__main__":
     args = docopt(__doc__, version='0.0.1')
-    geojson = to_geojson(args['<url>'])
+    MAX_PAGES = int(args['--max_pages'])
+    GEOCODER = args['--geocoder']
+    url = args['<url>']
+    print('## Processing url', url)
+    print('## max pages to process:', MAX_PAGES)
+    geojson = to_geojson(url)
     print(json.dumps(geojson))
