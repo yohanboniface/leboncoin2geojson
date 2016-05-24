@@ -8,7 +8,7 @@ Usage:
 Options:
     --help                  shows this message and exit
     --max_pages=<int>       max pages to process [default: 5]
-    --geocoder=<url>        geocoder to user [default: http://france.photon.fluv.io/api/?]
+    --geocoder=<url>        geocoder to user [default: http://api-adresse.data.gouv.fr/search/?]
 
 """
 
@@ -28,9 +28,9 @@ MAX_PAGES = 5
 
 def get_position(where):
     print('Getting position for', where)
-    r = requests.get(GEOCODER, params={'q': where})
+    r = requests.get(GEOCODER, params={'q': where, 'limit': 1})
     gj = r.json()
-    return gj['features'][0]['geometry']['coordinates']
+    return gj['features'][0]['geometry']['coordinates'] if gj['features'] else None  # noqa
 
 
 def clean(s):
@@ -59,6 +59,9 @@ def process_page(url, params, features=None, page=1):
             continue  # Only departement
         city, dep = where
         coords = get_position(" ".join([city.strip(), dep.strip()]))
+        if not coords:
+            print('{} not found'.format(name))
+            continue
         features.append({
             "type": "Feature",
             "geometry": {
@@ -102,6 +105,6 @@ if __name__ == "__main__":
     GEOCODER = args['--geocoder']
     url = args['<url>']
     print('## Processing url', url)
-    print('## max pages to process:', MAX_PAGES)
+    print('## max pages to process:', MAX_PAGES)
     geojson = to_geojson(url)
     print(json.dumps(geojson))
