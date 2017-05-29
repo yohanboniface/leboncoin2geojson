@@ -24,11 +24,13 @@ from pyquery import PyQuery as pq
 
 GEOCODER = ""
 MAX_PAGES = 5
+IMG_PATTERN = re.compile(r'data-imgsrc="([^"]+)"')
 
 
 def get_position(where):
     print('Getting position for', where)
-    r = requests.get(GEOCODER, params={'q': where, 'limit': 1})
+    params = {'q': where, 'limit': 1, 'type': 'municipality'}
+    r = requests.get(GEOCODER, params=params)
     gj = r.json()
     return gj['features'][0]['geometry']['coordinates'] if gj['features'] else None  # noqa
 
@@ -42,19 +44,25 @@ def process_page(url, params, features=None, page=1):
         features = []
     params['o'] = page
     print('# Page', page)
-    r = requests.get(url, params=params, headers={'user-agent': 'PutThemOnAMapAmigos'})
+    r = requests.get(url, params=params,
+                     headers={'user-agent': 'PutThemOnAMapAmigos'})
     doc = pq(r.text)
-    results = doc('.list-lbc a')
+    results = doc('.tabsContent ul li a')
     features = []
     for el in map(pq, results):
-        img = el('.image img')
+        img = el('.item_image .lazyload')
         if not img:
+            continue
+        try:
+            # How to access data-xx attributes using pyquery?
+            src = IMG_PATTERN.search(img.outer_html()).group(1)
+        except AttributeError:
             continue
         name = el.attr('title')
         print('Processing', name)
         href = el.attr('href')
-        price = el('.price').text()
-        where = clean(el('.placement').text()).split('/')
+        price = el('.item_price').text()
+        where = clean(el('[itemprop=availableAtOrFrom]').text()).split('/')
         if len(where) == 1:
             continue  # Only departement
         city, dep = where
@@ -72,12 +80,12 @@ def process_page(url, params, features=None, page=1):
                 "name": name,
                 "url": href,
                 "price": price,
-                "img": img.attr('src'),
+                "img": src,
                 "city": city,
                 "dep": dep
             }
         })
-    more_page = doc('#paging li:last a')
+    more_page = doc('.pagination a#next')
     if more_page and page < MAX_PAGES:
         features.extend(process_page(url, params, features, page + 1))
     return features
